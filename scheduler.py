@@ -32,6 +32,7 @@ class JobConfig:
     incremental: bool = False  # Enable incremental processing
     date_format: str = "%m%d%Y"  # Date format for start_date parameter
     lookback_days: int = 0  # Days to look back from last run (for overlap)
+    command_args: str = ""  # Additional command-line arguments (e.g., "--generate-ideas", "--review --session SESSION_ID")
 
 
 class DocOrchestrationScheduler:
@@ -208,12 +209,38 @@ class DocOrchestrationScheduler:
             else:
                 self.logger.info(f"No previous run found for '{job.name}'. Running full job.")
 
-        cmd = [
-            'python3',
-            str(self.orchestrator_path),
-            '--config', str(actual_config_path),
-            '--yes'  # Auto-confirm all prompts
-        ]
+        # Build command with optional command_args
+        if job.command_args:
+            # Parse command_args (supports staged execution modes)
+            import shlex
+            extra_args = shlex.split(job.command_args)
+
+            # Check if command_args contains a mode that doesn't need --config
+            no_config_modes = ['--list-pending', '--list-sessions', '--review', '--generate-docs']
+            needs_config = not any(mode in extra_args for mode in no_config_modes)
+
+            cmd = ['python3', str(self.orchestrator_path)]
+
+            # Add config if needed
+            if needs_config:
+                cmd.extend(['--config', str(actual_config_path)])
+
+            # Add extra args
+            cmd.extend(extra_args)
+
+            # Add --yes if not already present
+            if '--yes' not in extra_args and '-y' not in extra_args:
+                cmd.append('--yes')
+
+            self.logger.info(f"Using command_args: {job.command_args}")
+        else:
+            # Default: full sequential mode with --config and --yes
+            cmd = [
+                'python3',
+                str(self.orchestrator_path),
+                '--config', str(actual_config_path),
+                '--yes'  # Auto-confirm all prompts
+            ]
 
         self.logger.info(f"Executing: {' '.join(cmd)}")
 
@@ -298,7 +325,8 @@ class DocOrchestrationScheduler:
                 timeout=job_config.get('timeout', 3600),
                 incremental=job_config.get('incremental', False),
                 date_format=job_config.get('date_format', '%m%d%Y'),
-                lookback_days=job_config.get('lookback_days', 0)
+                lookback_days=job_config.get('lookback_days', 0),
+                command_args=job_config.get('command_args', '')
             )
 
             try:
@@ -364,7 +392,8 @@ class DocOrchestrationScheduler:
                 timeout=job_config.get('timeout', 3600),
                 incremental=job_config.get('incremental', False),
                 date_format=job_config.get('date_format', '%m%d%Y'),
-                lookback_days=job_config.get('lookback_days', 0)
+                lookback_days=job_config.get('lookback_days', 0),
+                command_args=job_config.get('command_args', '')
             )
 
             self.run_job(job)

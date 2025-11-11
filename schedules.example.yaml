@@ -69,6 +69,26 @@ jobs:
       minute: 0
       timezone: America/Los_Angeles
 
+  # ===== STAGED EXECUTION EXAMPLES =====
+
+  # Stage 1: Generate ideas only (runs weekly, stacks up for later review)
+  - name: "Generate Blog Ideas"
+    enabled: false
+    pipeline_config: "qwilo_pipeline.yaml"
+    command_args: "--generate-ideas"  # Only generate ideas, don't generate docs
+    timeout: 1800
+    schedule:
+      type: cron
+      day_of_week: mon
+      hour: 9
+      minute: 0
+      timezone: America/Los_Angeles
+
+  # Note: For manual review workflow, you would manually run:
+  #   python orchestrator.py --list-pending
+  #   python orchestrator.py --review --session SESSION_ID
+  #   python orchestrator.py --generate-docs --session SESSION_ID
+
 # Schedule Type Options:
 #
 # 1. cron - Cron-style scheduling
@@ -97,8 +117,27 @@ jobs:
 #   - State persisted in scheduler_state.json
 #   - Failed jobs don't update last_run, so next attempt uses same start_date
 #
+# Staged Execution (New Feature):
+#   command_args: Optional command-line arguments for staged execution modes
+#
+#   Examples:
+#   - "--generate-ideas" - Only generate ideas, don't create documents
+#   - "--review --session SESSION_ID" - Review a specific session (advanced)
+#   - "--generate-docs --session SESSION_ID" - Generate docs for reviewed session (advanced)
+#
+#   Staged workflow benefits:
+#   - Separate idea generation from document creation
+#   - Stack up multiple idea sessions for batch review
+#   - Manual quality control before committing to document generation
+#
+#   Typical staged workflow:
+#   1. Schedule automated idea generation (weekly/daily)
+#   2. Manually review pending sessions when convenient
+#   3. Manually trigger document generation for approved topics
+#
 # Notes:
 #   - Set enabled: false to disable a job without removing it
 #   - Pipeline configs can be relative (to DocOrchestrator dir) or absolute paths
 #   - Timeout is in seconds (1800 = 30 min, 3600 = 1 hour)
 #   - Jobs run with --yes flag (auto-confirm all prompts)
+#   - command_args is optional; without it, jobs run in full sequential mode (default)
