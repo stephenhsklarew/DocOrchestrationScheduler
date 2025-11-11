@@ -1,0 +1,9 @@
+# DocOrchestrationScheduler Requirements
+
+# Core dependencies
+PyYAML>=6.0.1
+APScheduler>=3.10.4
+pytz>=2024.1
+
+# Optional: For advanced scheduling
+# croniter>=2.0.0

@@ -1,0 +1,89 @@
+# DocOrchestrationScheduler Configuration Example
+# Copy this file to schedules.yaml and customize for your needs
+
+# Logging configuration
+logging:
+  level: INFO  # DEBUG, INFO, WARNING, ERROR
+  directory: ./logs  # Directory for log files
+
+# Scheduled jobs
+jobs:
+  # Weekly Qwilo blog pipeline - Runs every Monday at 9 AM
+  - name: "Weekly Qwilo Blog"
+    enabled: true
+    pipeline_config: "qwilo_pipeline.yaml"  # Relative to DocOrchestrator directory
+    timeout: 1800  # 30 minutes
+    schedule:
+      type: cron
+      day_of_week: mon  # mon, tue, wed, thu, fri, sat, sun
+      hour: 9
+      minute: 0
+      timezone: America/Los_Angeles
+
+  # Daily morning pipeline - Runs every weekday at 8 AM
+  - name: "Daily Morning Pipeline"
+    enabled: false  # Disabled by default
+    pipeline_config: "~/Development/Scripts/DocOrchestrator/my_pipeline.yaml"  # Absolute path
+    timeout: 3600  # 1 hour
+    schedule:
+      type: daily
+      time: "08:00"  # HH:MM format
+      timezone: America/Los_Angeles
+
+  # Weekend pipeline - Runs Saturday and Sunday at 10 AM
+  - name: "Weekend Pipeline"
+    enabled: false
+    pipeline_config: "weekend_pipeline.yaml"
+    timeout: 3600
+    schedule:
+      type: cron
+      day_of_week: sat,sun
+      hour: 10
+      minute: 0
+      timezone: America/Los_Angeles
+
+  # Every 6 hours pipeline
+  - name: "Frequent Updates"
+    enabled: false
+    pipeline_config: "frequent_pipeline.yaml"
+    timeout: 1800
+    schedule:
+      type: interval
+      hours: 6
+      minutes: 0
+      timezone: America/Los_Angeles
+
+  # Complex cron schedule - Every weekday at 2 PM and 6 PM
+  - name: "Twice Daily Weekdays"
+    enabled: false
+    pipeline_config: "twice_daily_pipeline.yaml"
+    timeout: 3600
+    schedule:
+      type: cron
+      day_of_week: mon-fri  # Monday through Friday
+      hour: 14,18  # 2 PM and 6 PM
+      minute: 0
+      timezone: America/Los_Angeles
+
+# Schedule Type Options:
+#
+# 1. cron - Cron-style scheduling
+#    day_of_week: mon, tue, wed, thu, fri, sat, sun, or combinations (mon-fri, sat,sun)
+#    hour: 0-23 or comma-separated list (9, 14,18)
+#    minute: 0-59
+#    timezone: Any pytz timezone (America/Los_Angeles, America/New_York, UTC, etc.)
+#
+# 2. daily - Run once per day at specific time
+#    time: "HH:MM" format (e.g., "09:00", "14:30")
+#    timezone: Any pytz timezone
+#
+# 3. interval - Run repeatedly at fixed intervals
+#    hours: Number of hours between runs
+#    minutes: Number of minutes between runs
+#    timezone: Any pytz timezone
+#
+# Notes:
+#   - Set enabled: false to disable a job without removing it
+#   - Pipeline configs can be relative (to DocOrchestrator dir) or absolute paths
+#   - Timeout is in seconds (1800 = 30 min, 3600 = 1 hour)
+#   - Jobs run with --yes flag (auto-confirm all prompts)
