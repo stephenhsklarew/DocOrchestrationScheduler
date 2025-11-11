@@ -32,6 +32,9 @@ logs/
 # Configuration (except examples)
 schedules.yaml
 
+# Runtime state
+scheduler_state.json
+
 # IDE
 .vscode/
 .idea/
