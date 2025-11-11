@@ -7,11 +7,13 @@ Schedules and runs DocOrchestrator pipelines at configurable times.
 import os
 import sys
 import yaml
+import json
 import subprocess
 import logging
 import argparse
+import tempfile
 from pathlib import Path
-from datetime import datetime, time as dt_time
+from datetime import datetime, time as dt_time, timedelta
 from typing import List, Dict, Optional
 from dataclasses import dataclass
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -27,6 +29,9 @@ class JobConfig:
     schedule: Dict
     enabled: bool = True
     timeout: int = 3600  # 1 hour default
+    incremental: bool = False  # Enable incremental processing
+    date_format: str = "%m%d%Y"  # Date format for start_date parameter
+    lookback_days: int = 0  # Days to look back from last run (for overlap)
 
 
 class DocOrchestrationScheduler:
@@ -40,6 +45,10 @@ class DocOrchestrationScheduler:
         self.scripts_dir = Path.home() / 'Development' / 'Scripts'
         self.orchestrator_path = self.scripts_dir / 'DocOrchestrator' / 'orchestrator.py'
 
+        # State file for tracking incremental runs
+        self.state_file = self.config_path.parent / 'scheduler_state.json'
+        self.state = self._load_state()
+
         # Setup logging
         self._setup_logging()
 
@@ -48,12 +57,34 @@ class DocOrchestrationScheduler:
             raise FileNotFoundError(f"DocOrchestrator not found at {self.orchestrator_path}")
 
         self.logger.info(f"Scheduler initialized with config: {config_path}")
+        if self.state:
+            self.logger.info(f"Loaded state for {len(self.state)} job(s)")
 
     def _load_config(self) -> Dict:
         """Load scheduler configuration from YAML"""
         with open(self.config_path, 'r') as f:
             config = yaml.safe_load(f)
         return config
+
+    def _load_state(self) -> Dict:
+        """Load scheduler state from JSON file"""
+        if not self.state_file.exists():
+            return {}
+
+        try:
+            with open(self.state_file, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            # If state file is corrupt, start fresh
+            return {}
+
+    def _save_state(self):
+        """Save scheduler state to JSON file"""
+        try:
+            with open(self.state_file, 'w') as f:
+                json.dump(self.state, f, indent=2, default=str)
+        except Exception as e:
+            self.logger.error(f"Failed to save state: {e}")
 
     def _setup_logging(self):
         """Setup logging configuration"""
@@ -129,10 +160,58 @@ class DocOrchestrationScheduler:
             self.logger.error(f"Pipeline config not found: {pipeline_config_path}")
             return
 
+        # Handle incremental processing
+        actual_config_path = pipeline_config_path
+        temp_config_file = None
+
+        if job.incremental:
+            self.logger.info(f"Incremental mode enabled for job '{job.name}'")
+
+            # Get last run date from state
+            last_run = self.state.get(job.name, {}).get('last_run')
+
+            if last_run:
+                # Parse last run date
+                try:
+                    last_run_date = datetime.fromisoformat(last_run)
+                    # Calculate start_date: last_run + 1 day - lookback_days
+                    start_date = last_run_date + timedelta(days=1) - timedelta(days=job.lookback_days)
+                    start_date_str = start_date.strftime(job.date_format)
+
+                    self.logger.info(f"Last run: {last_run_date.strftime('%Y-%m-%d')}")
+                    self.logger.info(f"Start date for this run: {start_date.strftime('%Y-%m-%d')} (formatted as {start_date_str})")
+
+                    # Load and modify pipeline config
+                    with open(pipeline_config_path, 'r') as f:
+                        pipeline_config = yaml.safe_load(f)
+
+                    # Inject start_date parameter
+                    if 'parameters' not in pipeline_config:
+                        pipeline_config['parameters'] = {}
+                    pipeline_config['parameters']['start_date'] = start_date_str
+
+                    # Write to temporary config file
+                    temp_config_file = tempfile.NamedTemporaryFile(
+                        mode='w',
+                        suffix='.yaml',
+                        delete=False,
+                        dir=pipeline_config_path.parent
+                    )
+                    yaml.dump(pipeline_config, temp_config_file)
+                    temp_config_file.close()
+                    actual_config_path = Path(temp_config_file.name)
+
+                    self.logger.info(f"Created temporary config with start_date parameter: {actual_config_path}")
+
+                except Exception as e:
+                    self.logger.warning(f"Failed to process incremental date: {e}. Running without start_date.")
+            else:
+                self.logger.info(f"No previous run found for '{job.name}'. Running full job.")
+
         cmd = [
             'python3',
             str(self.orchestrator_path),
-            '--config', str(pipeline_config_path),
+            '--config', str(actual_config_path),
             '--yes'  # Auto-confirm all prompts
         ]
 
@@ -149,14 +228,54 @@ class DocOrchestrationScheduler:
             if result.returncode == 0:
                 self.logger.info(f"Job '{job.name}' completed successfully")
                 self.logger.debug(f"Output: {result.stdout[-500:]}")  # Last 500 chars
+
+                # Update state for incremental jobs
+                if job.incremental:
+                    self.state[job.name] = {
+                        'last_run': datetime.now().isoformat(),
+                        'status': 'success'
+                    }
+                    self._save_state()
+                    self.logger.info(f"Updated state for '{job.name}'")
             else:
                 self.logger.error(f"Job '{job.name}' failed with code {result.returncode}")
                 self.logger.error(f"Error: {result.stderr[-500:]}")
 
+                # Update state with failure
+                if job.incremental:
+                    if job.name not in self.state:
+                        self.state[job.name] = {}
+                    self.state[job.name]['status'] = 'failed'
+                    self.state[job.name]['last_attempt'] = datetime.now().isoformat()
+                    self._save_state()
+
         except subprocess.TimeoutExpired:
             self.logger.error(f"Job '{job.name}' timed out after {job.timeout} seconds")
+
+            if job.incremental:
+                if job.name not in self.state:
+                    self.state[job.name] = {}
+                self.state[job.name]['status'] = 'timeout'
+                self.state[job.name]['last_attempt'] = datetime.now().isoformat()
+                self._save_state()
+
         except Exception as e:
             self.logger.error(f"Job '{job.name}' failed with exception: {e}")
+
+            if job.incremental:
+                if job.name not in self.state:
+                    self.state[job.name] = {}
+                self.state[job.name]['status'] = 'error'
+                self.state[job.name]['last_attempt'] = datetime.now().isoformat()
+                self._save_state()
+        finally:
+            # Clean up temporary config file
+            if temp_config_file and actual_config_path.exists():
+                try:
+                    actual_config_path.unlink()
+                    self.logger.debug(f"Cleaned up temporary config: {actual_config_path}")
+                except Exception as e:
+                    self.logger.warning(f"Failed to clean up temporary config: {e}")
 
     def add_jobs(self):
         """Add all configured jobs to the scheduler"""
@@ -176,7 +295,10 @@ class DocOrchestrationScheduler:
                 pipeline_config=job_config['pipeline_config'],
                 schedule=job_config['schedule'],
                 enabled=job_config.get('enabled', True),
-                timeout=job_config.get('timeout', 3600)
+                timeout=job_config.get('timeout', 3600),
+                incremental=job_config.get('incremental', False),
+                date_format=job_config.get('date_format', '%m%d%Y'),
+                lookback_days=job_config.get('lookback_days', 0)
             )
 
             try:
@@ -239,7 +361,10 @@ class DocOrchestrationScheduler:
                 pipeline_config=job_config['pipeline_config'],
                 schedule=job_config['schedule'],
                 enabled=job_config.get('enabled', True),
-                timeout=job_config.get('timeout', 3600)
+                timeout=job_config.get('timeout', 3600),
+                incremental=job_config.get('incremental', False),
+                date_format=job_config.get('date_format', '%m%d%Y'),
+                lookback_days=job_config.get('lookback_days', 0)
             )
 
             self.run_job(job)

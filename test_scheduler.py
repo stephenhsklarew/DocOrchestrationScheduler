@@ -249,6 +249,101 @@ class TestScheduleTypes(unittest.TestCase):
             Path(config_path).unlink(missing_ok=True)
 
 
+class TestIncrementalProcessing(unittest.TestCase):
+    """Test incremental state tracking"""
+
+    def setUp(self):
+        """Create temporary config with incremental job"""
+        self.config = {
+            'logging': {'level': 'INFO', 'directory': './test_logs'},
+            'jobs': [{
+                'name': 'Incremental Test Job',
+                'pipeline_config': 'test_pipeline.yaml',
+                'timeout': 1800,
+                'incremental': True,
+                'date_format': '%m%d%Y',
+                'lookback_days': 1,
+                'schedule': {
+                    'type': 'daily',
+                    'time': '09:00',
+                    'timezone': 'America/Los_Angeles'
+                }
+            }]
+        }
+
+        self.temp_config = tempfile.NamedTemporaryFile(
+            mode='w',
+            suffix='.yaml',
+            delete=False
+        )
+        yaml.dump(self.config, self.temp_config)
+        self.temp_config.close()
+
+    def tearDown(self):
+        """Clean up temporary files"""
+        Path(self.temp_config.name).unlink(missing_ok=True)
+        state_file = Path(self.temp_config.name).parent / 'scheduler_state.json'
+        state_file.unlink(missing_ok=True)
+
+    def test_incremental_config_loading(self):
+        """Test loading incremental job configuration"""
+        try:
+            scheduler = DocOrchestrationScheduler(self.temp_config.name)
+            job_config = scheduler.config['jobs'][0]
+
+            self.assertTrue(job_config.get('incremental', False))
+            self.assertEqual(job_config.get('date_format'), '%m%d%Y')
+            self.assertEqual(job_config.get('lookback_days'), 1)
+        except FileNotFoundError:
+            self.skipTest("DocOrchestrator not installed")
+
+    def test_state_file_creation(self):
+        """Test state file is created"""
+        try:
+            scheduler = DocOrchestrationScheduler(self.temp_config.name)
+            # State file should exist after initialization
+            self.assertEqual(scheduler.state, {})
+
+            # Simulate state update
+            scheduler.state['test_job'] = {
+                'last_run': '2025-01-15T09:00:00',
+                'status': 'success'
+            }
+            scheduler._save_state()
+
+            # Verify file exists
+            self.assertTrue(scheduler.state_file.exists())
+        except FileNotFoundError:
+            self.skipTest("DocOrchestrator not installed")
+
+    def test_incremental_job_defaults(self):
+        """Test JobConfig incremental defaults"""
+        job = JobConfig(
+            name='Test Job',
+            pipeline_config='test.yaml',
+            schedule={'type': 'daily'}
+        )
+
+        self.assertFalse(job.incremental)
+        self.assertEqual(job.date_format, '%m%d%Y')
+        self.assertEqual(job.lookback_days, 0)
+
+    def test_incremental_job_with_values(self):
+        """Test JobConfig with incremental values"""
+        job = JobConfig(
+            name='Test Job',
+            pipeline_config='test.yaml',
+            schedule={'type': 'daily'},
+            incremental=True,
+            date_format='%Y-%m-%d',
+            lookback_days=2
+        )
+
+        self.assertTrue(job.incremental)
+        self.assertEqual(job.date_format, '%Y-%m-%d')
+        self.assertEqual(job.lookback_days, 2)
+
+
 def run_tests():
     """Run all tests"""
     # Create test suite
@@ -259,6 +354,7 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestSchedulerConfig))
     suite.addTests(loader.loadTestsFromTestCase(TestJobConfig))
     suite.addTests(loader.loadTestsFromTestCase(TestScheduleTypes))
+    suite.addTests(loader.loadTestsFromTestCase(TestIncrementalProcessing))
 
     # Run tests
     runner = unittest.TextTestRunner(verbosity=2)

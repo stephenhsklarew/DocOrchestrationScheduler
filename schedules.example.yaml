@@ -9,10 +9,14 @@ logging:
 # Scheduled jobs
 jobs:
   # Weekly Qwilo blog pipeline - Runs every Monday at 9 AM
+  # This job uses incremental processing to avoid re-fetching the same data
   - name: "Weekly Qwilo Blog"
     enabled: true
     pipeline_config: "qwilo_pipeline.yaml"  # Relative to DocOrchestrator directory
     timeout: 1800  # 30 minutes
+    incremental: true  # Enable incremental processing
+    date_format: "%m%d%Y"  # Date format for start_date parameter (e.g., 01152025)
+    lookback_days: 0  # No overlap with previous run
     schedule:
       type: cron
       day_of_week: mon  # mon, tue, wed, thu, fri, sat, sun
@@ -81,6 +85,17 @@ jobs:
 #    hours: Number of hours between runs
 #    minutes: Number of minutes between runs
 #    timezone: Any pytz timezone
+#
+# Incremental Processing Options:
+#   incremental: true/false - Enable state tracking to avoid re-processing same data
+#   date_format: Format string for start_date parameter (e.g., "%m%d%Y" = "01152025")
+#   lookback_days: Number of days to overlap with previous run (0 = no overlap)
+#
+#   How it works:
+#   - First run: No start_date injected, processes all data
+#   - Subsequent runs: Calculates start_date as (last_run + 1 day - lookback_days)
+#   - State persisted in scheduler_state.json
+#   - Failed jobs don't update last_run, so next attempt uses same start_date
 #
 # Notes:
 #   - Set enabled: false to disable a job without removing it
