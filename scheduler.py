@@ -138,6 +138,9 @@ class DocOrchestrationScheduler:
             orchestrator_dir = self.orchestrator_path.parent
             review_cmd = f'cd {orchestrator_dir} && python3 orchestrator.py --review --session {session_id}'
 
+            # Path to Qwilo logo
+            logo_path = self.scripts_dir / 'DocIdeaGenerator' / 'qwilo_logo.png'
+
             # Send notification using terminal-notifier
             cmd = [
                 'terminal-notifier',
@@ -148,6 +151,12 @@ class DocOrchestrationScheduler:
                 '-actions', 'Review Now,Later',
                 '-execute', review_cmd
             ]
+
+            # Add app icon if logo exists
+            if logo_path.exists():
+                cmd.extend(['-appIcon', str(logo_path)])
+            else:
+                self.logger.warning(f"Qwilo logo not found at {logo_path}")
 
             self.logger.debug(f"Sending notification: {' '.join(cmd)}")
 
