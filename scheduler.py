@@ -303,35 +303,57 @@ class DocOrchestrationScheduler:
             ]
 
         self.logger.info(f"Executing: {' '.join(cmd)}")
+        self.logger.info(f"Streaming output in real-time...")
 
         try:
-            result = subprocess.run(
+            # Use Popen to stream output in real-time
+            import time
+            process = subprocess.Popen(
                 cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 text=True,
-                timeout=job.timeout
+                bufsize=1,
+                universal_newlines=True
             )
 
-            if result.returncode == 0:
+            # Stream output line by line
+            output_lines = []
+            session_id = None
+            topic_count = 0
+            start_time = time.time()
+
+            self.logger.info("─" * 60)
+            for line in process.stdout:
+                line = line.rstrip()
+                if line:
+                    # Log each line
+                    self.logger.info(f"  {line}")
+                    output_lines.append(line)
+
+                    # Parse for session ID and topic count
+                    if 'Session ID:' in line:
+                        session_id = line.split('Session ID:')[-1].strip()
+                    elif 'Generated' in line and 'topic' in line:
+                        import re
+                        match = re.search(r'Generated (\d+) topic', line)
+                        if match:
+                            topic_count = int(match.group(1))
+
+                # Check timeout
+                if time.time() - start_time > job.timeout:
+                    process.kill()
+                    raise subprocess.TimeoutExpired(cmd, job.timeout)
+
+            # Wait for process to complete
+            process.wait()
+            self.logger.info("─" * 60)
+
+            if process.returncode == 0:
                 self.logger.info(f"Job '{job.name}' completed successfully")
-                self.logger.debug(f"Output: {result.stdout[-500:]}")  # Last 500 chars
 
                 # Send notification if this was an idea generation job
                 if job.notify_on_success and '--generate-ideas' in job.command_args:
-                    # Parse output to extract session ID and topic count
-                    session_id = None
-                    topic_count = 0
-
-                    for line in result.stdout.split('\n'):
-                        if 'Session ID:' in line:
-                            session_id = line.split('Session ID:')[-1].strip()
-                        elif 'Generated' in line and 'topic' in line:
-                            # Extract number from "Generated X topic(s)"
-                            import re
-                            match = re.search(r'Generated (\d+) topic', line)
-                            if match:
-                                topic_count = int(match.group(1))
-
                     # Only send notification if we found topics
                     if session_id and topic_count > 0:
                         self._send_notification(job.name, session_id, topic_count)
@@ -347,8 +369,12 @@ class DocOrchestrationScheduler:
                     self._save_state()
                     self.logger.info(f"Updated state for '{job.name}'")
             else:
-                self.logger.error(f"Job '{job.name}' failed with code {result.returncode}")
-                self.logger.error(f"Error: {result.stderr[-500:]}")
+                self.logger.error(f"Job '{job.name}' failed with code {process.returncode}")
+                # Show last 10 lines of output for debugging
+                if output_lines:
+                    self.logger.error("Last output lines:")
+                    for line in output_lines[-10:]:
+                        self.logger.error(f"  {line}")
 
                 # Update state with failure
                 if job.incremental:
