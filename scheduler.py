@@ -134,9 +134,8 @@ class DocOrchestrationScheduler:
             return
 
         try:
-            # Build the review command
-            orchestrator_dir = self.orchestrator_path.parent
-            review_cmd = f'cd {orchestrator_dir} && python3 orchestrator.py --review --session {session_id}'
+            # Path to wrapper script that handles Terminal opening
+            wrapper_script = self.config_path.parent / 'review_notification_handler.sh'
 
             # Path to Qwilo logo
             logo_path = self.scripts_dir / 'DocIdeaGenerator' / 'qwilo_logo.png'
@@ -145,16 +144,16 @@ class DocOrchestrationScheduler:
             cmd = [
                 'terminal-notifier',
                 '-title', '🎯 New Blog Ideas Ready!',
-                '-message', f'{job_name}\n{topic_count} topics generated\nSession: {session_id}',
+                '-message', f'New Qwilo Content Ideas Ready! 👆 Click to review.\n\n{topic_count} topics generated',
                 '-sound', 'default',
                 '-group', 'docorchestrator',
-                '-actions', 'Review Now,Later',
-                '-execute', review_cmd
+                '-timeout', '30',
+                '-execute', f'{wrapper_script} {session_id}'
             ]
 
-            # Add app icon if logo exists
+            # Add content image (logo on right) if it exists
             if logo_path.exists():
-                cmd.extend(['-appIcon', str(logo_path)])
+                cmd.extend(['-contentImage', str(logo_path)])
             else:
                 self.logger.warning(f"Qwilo logo not found at {logo_path}")
 
