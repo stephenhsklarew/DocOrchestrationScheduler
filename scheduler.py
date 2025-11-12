@@ -359,7 +359,10 @@ class DocOrchestrationScheduler:
             self.logger.info(f"\nScheduled {len(jobs)} job(s):")
             for job in jobs:
                 self.logger.info(f"  • {job.name}")
-                self.logger.info(f"    Next run: {job.next_run_time}")
+                # Get next run time if available
+                next_run = getattr(job, 'next_run_time', None)
+                if next_run:
+                    self.logger.info(f"    Next run: {next_run}")
         else:
             self.logger.warning("No jobs scheduled. Exiting.")
             return
