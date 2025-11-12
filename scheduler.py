@@ -33,6 +33,7 @@ class JobConfig:
     date_format: str = "%m%d%Y"  # Date format for start_date parameter
     lookback_days: int = 0  # Days to look back from last run (for overlap)
     command_args: str = ""  # Additional command-line arguments (e.g., "--generate-ideas", "--review --session SESSION_ID")
+    notify_on_success: bool = False  # Send notification on successful completion
 
 
 class DocOrchestrationScheduler:
@@ -50,6 +51,10 @@ class DocOrchestrationScheduler:
         self.state_file = self.config_path.parent / 'scheduler_state.json'
         self.state = self._load_state()
 
+        # Load notification settings
+        self.notifications = self.config.get('notifications', {})
+        self.notifications_enabled = self.notifications.get('enabled', False)
+
         # Setup logging
         self._setup_logging()
 
@@ -60,6 +65,8 @@ class DocOrchestrationScheduler:
         self.logger.info(f"Scheduler initialized with config: {config_path}")
         if self.state:
             self.logger.info(f"Loaded state for {len(self.state)} job(s)")
+        if self.notifications_enabled:
+            self.logger.info(f"Notifications enabled: {self.notifications.get('type', 'desktop')}")
 
     def _load_config(self) -> Dict:
         """Load scheduler configuration from YAML"""
@@ -115,6 +122,51 @@ class DocOrchestrationScheduler:
         console_formatter = logging.Formatter('%(levelname)s: %(message)s')
         console_handler.setFormatter(console_formatter)
         self.logger.addHandler(console_handler)
+
+    def _send_notification(self, job_name: str, session_id: str, topic_count: int):
+        """Send desktop notification with interactive buttons"""
+        if not self.notifications_enabled:
+            return
+
+        notification_type = self.notifications.get('type', 'desktop')
+        if notification_type != 'desktop':
+            self.logger.warning(f"Notification type '{notification_type}' not yet implemented")
+            return
+
+        try:
+            # Build the review command
+            orchestrator_dir = self.orchestrator_path.parent
+            review_cmd = f'cd {orchestrator_dir} && python3 orchestrator.py --review --session {session_id}'
+
+            # Send notification using terminal-notifier
+            cmd = [
+                'terminal-notifier',
+                '-title', '🎯 New Blog Ideas Ready!',
+                '-message', f'{job_name}\n{topic_count} topics generated\nSession: {session_id}',
+                '-sound', 'default',
+                '-group', 'docorchestrator',
+                '-actions', 'Review Now,Later',
+                '-execute', review_cmd
+            ]
+
+            self.logger.debug(f"Sending notification: {' '.join(cmd)}")
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if result.returncode == 0:
+                self.logger.info(f"Notification sent for job '{job_name}' (Session: {session_id})")
+            else:
+                self.logger.warning(f"Notification failed: {result.stderr}")
+
+        except FileNotFoundError:
+            self.logger.error("terminal-notifier not found. Install with: brew install terminal-notifier")
+        except Exception as e:
+            self.logger.error(f"Failed to send notification: {e}")
 
     def _parse_schedule(self, schedule: Dict) -> tuple:
         """Parse schedule configuration into APScheduler trigger"""
@@ -256,6 +308,28 @@ class DocOrchestrationScheduler:
                 self.logger.info(f"Job '{job.name}' completed successfully")
                 self.logger.debug(f"Output: {result.stdout[-500:]}")  # Last 500 chars
 
+                # Send notification if this was an idea generation job
+                if job.notify_on_success and '--generate-ideas' in job.command_args:
+                    # Parse output to extract session ID and topic count
+                    session_id = None
+                    topic_count = 0
+
+                    for line in result.stdout.split('\n'):
+                        if 'Session ID:' in line:
+                            session_id = line.split('Session ID:')[-1].strip()
+                        elif 'Generated' in line and 'topic' in line:
+                            # Extract number from "Generated X topic(s)"
+                            import re
+                            match = re.search(r'Generated (\d+) topic', line)
+                            if match:
+                                topic_count = int(match.group(1))
+
+                    # Only send notification if we found topics
+                    if session_id and topic_count > 0:
+                        self._send_notification(job.name, session_id, topic_count)
+                    elif session_id:
+                        self.logger.info(f"No topics generated in session {session_id}, skipping notification")
+
                 # Update state for incremental jobs
                 if job.incremental:
                     self.state[job.name] = {
@@ -326,7 +400,8 @@ class DocOrchestrationScheduler:
                 incremental=job_config.get('incremental', False),
                 date_format=job_config.get('date_format', '%m%d%Y'),
                 lookback_days=job_config.get('lookback_days', 0),
-                command_args=job_config.get('command_args', '')
+                command_args=job_config.get('command_args', ''),
+                notify_on_success=job_config.get('notify_on_success', False)
             )
 
             try:
@@ -396,7 +471,8 @@ class DocOrchestrationScheduler:
                 incremental=job_config.get('incremental', False),
                 date_format=job_config.get('date_format', '%m%d%Y'),
                 lookback_days=job_config.get('lookback_days', 0),
-                command_args=job_config.get('command_args', '')
+                command_args=job_config.get('command_args', ''),
+                notify_on_success=job_config.get('notify_on_success', False)
             )
 
             self.run_job(job)
