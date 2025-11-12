@@ -34,6 +34,7 @@ class JobConfig:
     lookback_days: int = 0  # Days to look back from last run (for overlap)
     command_args: str = ""  # Additional command-line arguments (e.g., "--generate-ideas", "--review --session SESSION_ID")
     notify_on_success: bool = False  # Send notification on successful completion
+    notification_type: str = ""  # Override default notification type (empty = use global default)
 
 
 class DocOrchestrationScheduler:
@@ -123,16 +124,103 @@ class DocOrchestrationScheduler:
         console_handler.setFormatter(console_formatter)
         self.logger.addHandler(console_handler)
 
-    def _send_notification(self, job_name: str, session_id: str, topic_count: int):
-        """Send desktop notification with interactive buttons"""
+    def _send_notification(self, job_name: str, session_id: str, topic_count: int, notification_type_override: str = ""):
+        """Send notification (Slack or desktop) based on configuration"""
         if not self.notifications_enabled:
             return
 
-        notification_type = self.notifications.get('type', 'desktop')
-        if notification_type != 'desktop':
-            self.logger.warning(f"Notification type '{notification_type}' not yet implemented")
+        # Determine notification type (job override or global default)
+        notification_type = notification_type_override or self.notifications.get('type', 'slack')
+
+        if notification_type == 'slack':
+            self._send_slack_notification(job_name, session_id, topic_count)
+        elif notification_type == 'desktop':
+            self._send_desktop_notification(job_name, session_id, topic_count)
+        else:
+            self.logger.warning(f"Unknown notification type '{notification_type}'")
+
+    def _send_slack_notification(self, job_name: str, session_id: str, topic_count: int):
+        """Send Slack notification via webhook"""
+        try:
+            import requests
+        except ImportError:
+            self.logger.error("requests module not installed. Install with: pip install requests")
             return
 
+        slack_config = self.notifications.get('slack', {})
+        webhook_url = slack_config.get('webhook_url')
+
+        if not webhook_url:
+            self.logger.error("Slack webhook_url not configured in schedules.yaml")
+            return
+
+        # Build Slack message with action button
+        review_url = f"qwilo://review-ideas?session={session_id}"
+
+        message = {
+            "text": f"🎯 *New Blog Ideas Ready!*",
+            "blocks": [
+                {
+                    "type": "header",
+                    "text": {
+                        "type": "plain_text",
+                        "text": "🎯 New Qwilo Content Ideas Ready!",
+                        "emoji": True
+                    }
+                },
+                {
+                    "type": "section",
+                    "fields": [
+                        {
+                            "type": "mrkdwn",
+                            "text": f"*Topics Generated:*\n{topic_count}"
+                        },
+                        {
+                            "type": "mrkdwn",
+                            "text": f"*Session ID:*\n`{session_id}`"
+                        }
+                    ]
+                },
+                {
+                    "type": "actions",
+                    "elements": [
+                        {
+                            "type": "button",
+                            "text": {
+                                "type": "plain_text",
+                                "text": "📋 Review Topics in Terminal",
+                                "emoji": True
+                            },
+                            "url": review_url,
+                            "style": "primary"
+                        }
+                    ]
+                },
+                {
+                    "type": "context",
+                    "elements": [
+                        {
+                            "type": "mrkdwn",
+                            "text": f"_Click the button above to open Terminal and review topics_"
+                        }
+                    ]
+                }
+            ]
+        }
+
+        try:
+            response = requests.post(webhook_url, json=message, timeout=10)
+
+            if response.status_code == 200:
+                self.logger.info(f"Slack notification sent for job '{job_name}' (Session: {session_id})")
+            else:
+                self.logger.warning(f"Slack notification failed: HTTP {response.status_code} - {response.text}")
+
+        except Exception as e:
+            self.logger.error(f"Failed to send Slack notification: {e}")
+
+    def _send_desktop_notification(self, job_name: str, session_id: str, topic_count: int):
+        """Send desktop notification with interactive buttons"""
         try:
             # Path to wrapper script that handles Terminal opening
             wrapper_script = self.config_path.parent / 'review_notification_handler.sh'
@@ -167,9 +255,9 @@ class DocOrchestrationScheduler:
             )
 
             if result.returncode == 0:
-                self.logger.info(f"Notification sent for job '{job_name}' (Session: {session_id})")
+                self.logger.info(f"Desktop notification sent for job '{job_name}' (Session: {session_id})")
             else:
-                self.logger.warning(f"Notification failed: {result.stderr}")
+                self.logger.warning(f"Desktop notification failed: {result.stderr}")
 
         except FileNotFoundError:
             self.logger.error("terminal-notifier not found. Install with: brew install terminal-notifier")
@@ -356,7 +444,7 @@ class DocOrchestrationScheduler:
                 if job.notify_on_success and '--generate-ideas' in job.command_args:
                     # Only send notification if we found topics
                     if session_id and topic_count > 0:
-                        self._send_notification(job.name, session_id, topic_count)
+                        self._send_notification(job.name, session_id, topic_count, job.notification_type)
                     elif session_id:
                         self.logger.info(f"No topics generated in session {session_id}, skipping notification")
 
