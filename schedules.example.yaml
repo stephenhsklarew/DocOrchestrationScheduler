@@ -6,20 +6,83 @@ logging:
   level: INFO  # DEBUG, INFO, WARNING, ERROR
   directory: ./logs  # Directory for log files
 
+# Notification settings
+notifications:
+  enabled: true  # Enable notifications
+  type: "slack"  # Default notification type: "slack" or "desktop"
+
+  # Slack configuration
+  slack:
+    webhook_url: "YOUR_SLACK_WEBHOOK_URL_HERE"
+
+  # Desktop notification configuration (macOS only)
+  desktop:
+    sound: true  # Play sound with notification
+
 # Scheduled jobs
 jobs:
-  # Weekly Qwilo blog pipeline - Runs every Monday at 9 AM
-  # This job uses incremental processing to avoid re-fetching the same data
-  - name: "Weekly Qwilo Blog"
+  # Gmail idea generation - Check for new emails daily at 3:00 AM
+  - name: "Qwilo Ideas - Gmail Check"
     enabled: true
-    pipeline_config: "qwilo_pipeline.yaml"  # Relative to DocOrchestrator directory
+    pipeline_config: "qwilo_gmail_pipeline.yaml"  # Relative to DocOrchestrator directory
+    command_args: "--generate-ideas"  # Only generate ideas, don't create documents
+    timeout: 2100  # 35 minutes
+    notify_on_success: true  # Send notification when ideas are generated
+    notification_type: ""  # Empty = use global default (Slack)
+
+    # Incremental processing - only process emails since last successful run
+    incremental: true
+    date_format: "%m%d%Y"  # Format: 01152025
+    lookback_days: 0  # No overlap - start from day after last run
+
+    schedule:
+      type: daily
+      time: "03:00"  # 3:00 AM Pacific
+      timezone: America/Los_Angeles
+
+  # Google Drive idea generation - Check for documents daily at 8:00 AM
+  - name: "Qwilo Ideas - Google Drive Check"
+    enabled: true
+    pipeline_config: "qwilo_gdrive_pipeline.yaml"  # Relative to DocOrchestrator directory
+    command_args: "--generate-ideas"  # Only generate ideas, don't create documents
+    timeout: 2100  # 35 minutes
+    notify_on_success: true  # Send notification when ideas are generated
+    notification_type: ""  # Empty = use global default (Slack)
+
+    # Note: Google Drive does not support incremental processing
+    # The job will process all documents in the specified folder each time it runs
+
+    schedule:
+      type: daily
+      time: "08:00"  # 8:00 AM Pacific
+      timezone: America/Los_Angeles
+
+  # Document generation - Process reviewed topics every 15 minutes
+  - name: "Generate Documents - Every 15 Minutes"
+    enabled: true
+    pipeline_config: ""  # Not needed for --generate-all-pending
+    command_args: "--generate-all-pending"  # Generate docs for all reviewed sessions
     timeout: 1800  # 30 minutes
-    incremental: true  # Enable incremental processing
-    date_format: "%m%d%Y"  # Date format for start_date parameter (e.g., 01152025)
-    lookback_days: 0  # No overlap with previous run
+    notify_on_success: false  # Notifications sent by orchestrator per document
+
+    schedule:
+      type: interval
+      minutes: 15  # Run every 15 minutes
+      timezone: America/Los_Angeles
+
+  # ===== ADDITIONAL SCHEDULING EXAMPLES =====
+
+  # Weekly Qwilo blog pipeline - Runs every Monday at 9 AM
+  - name: "Weekly Qwilo Blog"
+    enabled: false
+    pipeline_config: "qwilo_pipeline.yaml"
+    timeout: 1800
+    incremental: true
+    date_format: "%m%d%Y"
+    lookback_days: 0
     schedule:
       type: cron
-      day_of_week: mon  # mon, tue, wed, thu, fri, sat, sun
+      day_of_week: mon
       hour: 9
       minute: 0
       timezone: America/Los_Angeles
