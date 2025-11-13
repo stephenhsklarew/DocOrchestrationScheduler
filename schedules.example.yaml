@@ -84,6 +84,28 @@ jobs:
       minute: 0
       timezone: America/Los_Angeles
 
+  # Stage 2: Process all pending reviews and generate documents (runs every 15 minutes)
+  - name: "Generate Documents - Every 15 Minutes"
+    enabled: false
+    pipeline_config: ""  # Not needed for --generate-all-pending
+    command_args: "--generate-all-pending"  # Generate docs for all reviewed sessions
+    timeout: 1800  # 30 minutes
+    schedule:
+      type: interval
+      minutes: 15
+      timezone: America/Los_Angeles
+
+  # Google Drive source example - Process documents from Google Drive folder
+  - name: "Qwilo Ideas - Google Drive"
+    enabled: false
+    pipeline_config: "qwilo_gdrive_pipeline.yaml"  # Uses Google Drive as source
+    command_args: "--generate-ideas"
+    timeout: 2100  # 35 minutes
+    schedule:
+      type: daily
+      time: "16:00"  # 4:00 PM Pacific
+      timezone: America/Los_Angeles
+
   # Note: For manual review workflow, you would manually run:
   #   python orchestrator.py --list-pending
   #   python orchestrator.py --review --session SESSION_ID
